@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 import { APERTURE_SECRET_KEY, inferApertureApiMode, MODELS_SETTING, SETTINGS_NAMESPACE } from "./aperture";
+import { getApertureRequestHeaders } from "./apertureHeaders";
+import { deriveApertureSessionId } from "./session";
 import { ApertureLanguageModelInformation, ChatCompletionChunk, ChatMessage, HFModelItem } from "./types";
 import { getUserAgent } from "./userAgent";
 
@@ -40,7 +42,7 @@ export class HuggingFaceChatModelProvider implements vscode.LanguageModelChatPro
 	public async provideLanguageModelChatResponse(
 		model: ApertureLanguageModelInformation & vscode.LanguageModelChatInformation,
 		messages: readonly vscode.LanguageModelChatRequestMessage[],
-		_options: unknown,
+		_options: vscode.ProvideLanguageModelChatResponseOptions,
 		progress: vscode.Progress<vscode.LanguageModelResponsePart>,
 		token: vscode.CancellationToken,
 	): Promise<void> {
@@ -49,7 +51,7 @@ export class HuggingFaceChatModelProvider implements vscode.LanguageModelChatPro
 		}
 
 		const apiKey = await this.context.secrets.get(model.apiKeyName ?? APERTURE_SECRET_KEY);
-		const response = await sendApertureRequest(model, messages.map(toChatMessage), apiKey, token);
+		const response = await sendApertureRequest(model, messages.map(toChatMessage), apiKey, _options, token);
 
 		if (!response.ok) {
 			const body = await response.text();
@@ -78,30 +80,20 @@ async function sendApertureRequest(
 	model: ApertureLanguageModelInformation,
 	messages: ChatMessage[],
 	apiKey: string | undefined,
+	options: vscode.ProvideLanguageModelChatResponseOptions,
 	token: vscode.CancellationToken,
 ): Promise<Response> {
 	const apiMode: NonNullable<HFModelItem["apiMode"]> = model.apiMode ?? inferApertureApiMode(model.model) ?? "openai";
 	const endpoint = getApertureEndpoint(model.baseUrl!, model.model, apiMode);
 	const body = getApertureRequestBody(model.model, messages, apiMode);
+	const sessionId = deriveApertureSessionId(options);
 
 	return fetch(endpoint, {
 		method: "POST",
-		headers: getApertureRequestHeaders(apiKey, apiMode),
+		headers: getApertureRequestHeaders(apiKey, apiMode, getUserAgent(vscode.version), sessionId),
 		body: JSON.stringify(body),
 		signal: tokenToSignal(token),
 	});
-}
-
-function getApertureRequestHeaders(
-	apiKey: string | undefined,
-	apiMode: NonNullable<HFModelItem["apiMode"]>,
-): HeadersInit {
-	return {
-		Accept: apiMode === "openai" ? "text/event-stream" : "application/json",
-		"Content-Type": "application/json",
-		"User-Agent": getUserAgent(vscode.version),
-		...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-	};
 }
 
 function getApertureEndpoint(baseUrl: string, modelId: string, apiMode: NonNullable<HFModelItem["apiMode"]>): string {

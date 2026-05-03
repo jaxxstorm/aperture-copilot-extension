@@ -13,6 +13,10 @@ Unlike OpenAI-compatible Copilot extensions that require manually editing VS Cod
 
 Use **Aperture Copilot: Refresh Aperture Models** whenever Aperture models change.
 
+## Aperture Sessions
+
+Every chat request includes an opaque session header so Aperture can group related VS Code Chat and Copilot Chat requests into one conversation in the Aperture dashboard. When VS Code exposes stable chat metadata, the extension derives the session from that metadata; otherwise it uses an extension-host fallback id without including prompt text or secrets.
+
 ## Run Locally
 
 ```bash
