@@ -1,0 +1,14 @@
+.codex/**
+.github/**
+.opencode/**
+.vscode/**
+node_modules/**
+openspec/**
+src/**
+test/**
+out/test/**
+.prettierignore
+.gitignore
+eslint.config.mjs
+tsconfig.json
+*.vsix

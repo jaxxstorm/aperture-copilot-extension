@@ -1,0 +1,71 @@
+{
+	"name": "aperture-copilot-extension",
+	"displayName": "Aperture Copilot",
+	"description": "Use Tailscale Aperture-served models in VS Code Chat and Copilot Chat.",
+	"version": "0.0.1",
+	"publisher": "jaxxstorm",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.90.0"
+	},
+	"categories": [
+		"AI",
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished",
+		"onCommand:oaicopilot.configureAperture",
+		"onCommand:oaicopilot.refreshApertureModels"
+	],
+	"main": "./out/src/extension.js",
+	"enabledApiProposals": [
+		"chatProvider"
+	],
+	"contributes": {
+		"commands": [
+			{
+				"command": "oaicopilot.configureAperture",
+				"title": "Aperture Copilot: Configure Aperture"
+			},
+			{
+				"command": "oaicopilot.refreshApertureModels",
+				"title": "Aperture Copilot: Refresh Aperture Models"
+			}
+		],
+		"configuration": {
+			"title": "Aperture Copilot",
+			"properties": {
+				"oaicopilot.aperture.baseUrl": {
+					"type": "string",
+					"default": "",
+					"description": "Base URL for the Tailscale Aperture API, for example http://ai."
+				},
+				"oaicopilot.aperture.providerId": {
+					"type": "string",
+					"default": "aperture",
+					"description": "Provider identity used for Aperture-discovered model entries."
+				}
+			}
+		}
+	},
+	"scripts": {
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./",
+		"lint": "eslint src test --ext .ts",
+		"format": "prettier --write .",
+		"test": "npm run compile && node --test \"out/test/**/*.test.js\"",
+		"build": "vsce package",
+		"download-api": "npx @vscode/dts dev"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.16.0",
+		"@stylistic/eslint-plugin": "^2.12.1",
+		"@types/node": "^22.10.1",
+		"@types/vscode": "^1.90.0",
+		"@vscode/vsce": "^3.2.1",
+		"eslint": "^9.16.0",
+		"prettier": "^3.4.2",
+		"typescript": "^5.7.2",
+		"typescript-eslint": "^8.17.0"
+	}
+}

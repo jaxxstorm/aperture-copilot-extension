@@ -1,0 +1,63 @@
+schema: spec-driven
+
+context: |
+  This repository is a VS Code extension for Tailscale Aperture. It adds support
+  for using Aperture-served models inside VS Code Chat and Copilot Chat.
+
+  The extension is functionally similar to:
+  https://github.com/JohnnyZ93/oai-compatible-copilot
+
+  The key difference is that users do not need to modify VS Code settings to add
+  models manually. They provide the base URL for Aperture, and the extension
+  discovers available models from the Aperture API, likely via:
+  http://ai/ui/api#model/GetConfigBody
+
+  Discovered models are used to populate the extension's model settings for the
+  user.
+
+  The extension can be published to the VS Code extension marketplace. The
+  README should also include instructions for running it locally during
+  development.
+
+  Architecture:
+  - Entry point: src/extension.ts registers HuggingFaceChatModelProvider under
+    vendor id oaicopilot.
+  - Core provider: src/provider.ts implements the LanguageModelChatProvider
+    interface.
+  - API providers live under src/openai, src/ollama, src/anthropic, and
+    src/gemini for provider-specific API handling.
+
+  Configuration and storage:
+  - API keys are stored with vscode.SecretStorage using oaicopilot.apiKey or
+    oaicopilot.apiKey.{provider}.
+  - Model configuration uses the oaicopilot.models setting. See src/types.ts for
+    HFModelItem.
+  - Multiple providers are supported; the same model can have different configId
+    values for different settings.
+
+  Build and verification commands:
+  - npm run compile builds TypeScript.
+  - npm run lint runs ESLint.
+  - npm run format formats with Prettier.
+  - npm run test runs compile plus vscode-test.
+  - npm run build packages the extension to a VSIX.
+  - npm run download-api downloads VS Code proposed API types after
+    vscode.d.ts updates.
+
+  Code style:
+  - TypeScript project.
+  - Semicolons are required.
+  - Curly braces are required.
+  - Variables prefixed with _ may be unused.
+  - Use tab indentation.
+  - Use double quotes for strings.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
