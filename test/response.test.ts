@@ -20,6 +20,17 @@ test("parses completed OpenAI Responses stream items", () => {
 	assert.equal(token, "done");
 });
 
+test("does not duplicate completed OpenAI Responses stream items after text deltas", () => {
+	const state = {};
+
+	assert.equal(parseSseLine("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hel\"}", state), "hel");
+	assert.equal(parseSseLine("data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}", state), "lo");
+	assert.equal(
+		parseSseLine("data: {\"type\":\"response.output_item.done\",\"item\":{\"content\":[{\"text\":\"hello\"}]}}", state),
+		undefined,
+	);
+});
+
 test("parses streamed Anthropic content deltas", () => {
 	const token = parseSseLine("data: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"hi\"}}");
 

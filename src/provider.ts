@@ -13,7 +13,7 @@ import {
 import { getApertureRequestHeaders } from "./apertureHeaders";
 import { getApertureApiModeLabel, getApertureEndpoint, getApertureRequestBody } from "./apertureRouting";
 import { ApertureDiagnostics, noopDiagnostics, sanitizeBodyExcerpt, sanitizeError, summarizeUnknown } from "./diagnostics";
-import { getApertureRequestFailureMessage, parseJsonResponseText, parseSseLine } from "./response";
+import { getApertureRequestFailureMessage, parseJsonResponseText, parseSseLine, SseParseState } from "./response";
 import { deriveApertureSessionId } from "./session";
 import { ApertureLanguageModelInformation, ChatMessage, HFModelItem } from "./types";
 import { getUserAgent } from "./userAgent";
@@ -267,6 +267,7 @@ export async function streamChatResponse(
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
 	let buffer = "";
+	const parseState: SseParseState = {};
 
 	while (true) {
 		const { done, value } = await reader.read();
@@ -279,7 +280,7 @@ export async function streamChatResponse(
 		buffer = lines.pop() ?? "";
 
 		for (const line of lines) {
-			const token = parseSseLine(line);
+			const token = parseSseLine(line, parseState);
 			if (token) {
 				onToken(token);
 			}
@@ -291,7 +292,7 @@ export async function streamChatResponse(
 		buffer += tail;
 	}
 
-	const token = parseSseLine(buffer);
+	const token = parseSseLine(buffer, parseState);
 	if (token) {
 		onToken(token);
 	}

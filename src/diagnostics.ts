@@ -25,7 +25,7 @@ export class NoopDiagnostics implements ApertureDiagnostics {
 export const noopDiagnostics = new NoopDiagnostics();
 
 const SECRET_KEY_PATTERN = /(?:api[-_ ]?key|authorization|token|secret|credential|password)/i;
-const PROMPT_KEY_PATTERN = /(?:prompt|messages?|content|request[-_ ]?body|body)/i;
+const PROMPT_KEY_PATTERN = /^(?:prompt|messages?|content|request[-_ ]?body|body)$/i;
 const MAX_STRING_LENGTH = 1000;
 
 export function sanitizeDiagnosticValue(value: unknown): unknown {

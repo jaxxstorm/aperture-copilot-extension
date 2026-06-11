@@ -1,7 +1,11 @@
 import { sanitizeBodyExcerpt } from "./diagnostics";
 import { ChatCompletionChunk } from "./types";
 
-export function parseSseLine(line: string): string | undefined {
+export interface SseParseState {
+	sawOpenAiResponsesTextDelta?: boolean;
+}
+
+export function parseSseLine(line: string, state?: SseParseState): string | undefined {
 	const trimmed = line.trim();
 	if (!trimmed || !trimmed.startsWith("data:")) {
 		return undefined;
@@ -22,7 +26,7 @@ export function parseSseLine(line: string): string | undefined {
 	return (
 		chunk.choices?.[0]?.delta?.content ??
 		chunk.choices?.[0]?.message?.content ??
-		parseOpenAiResponsesDelta(chunk) ??
+		parseOpenAiResponsesDelta(chunk, state) ??
 		parseAnthropicContentDelta(chunk)
 	);
 }
@@ -86,16 +90,22 @@ export function getApertureRequestFailureMessage(status: number, statusText: str
 	return `Aperture request failed: ${status} ${statusText}.${detail}`;
 }
 
-function parseOpenAiResponsesDelta(chunk: unknown): string | undefined {
+function parseOpenAiResponsesDelta(chunk: unknown, state?: SseParseState): string | undefined {
 	if (typeof chunk !== "object" || chunk === null) {
 		return undefined;
 	}
 
 	if ("type" in chunk && chunk.type === "response.output_text.delta" && "delta" in chunk && typeof chunk.delta === "string") {
+		if (state) {
+			state.sawOpenAiResponsesTextDelta = true;
+		}
 		return chunk.delta;
 	}
 
 	if ("type" in chunk && chunk.type === "response.output_item.done" && "item" in chunk) {
+		if (state?.sawOpenAiResponsesTextDelta) {
+			return undefined;
+		}
 		return parseJsonResponseText(chunk.item);
 	}
 

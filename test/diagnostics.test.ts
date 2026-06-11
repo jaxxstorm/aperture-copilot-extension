@@ -40,6 +40,24 @@ test("diagnostic strings redact bearer tokens and credential-like fields", () =>
 	assert.doesNotMatch(error, /secret-token/);
 });
 
+test("diagnostics preserve sanitized response metadata fields", () => {
+	const sanitized = sanitizeDiagnosticValue({
+		contentType: "application/json",
+		bodyExcerpt: "{\"error\":\"Missing required query parameter: api-version\"}",
+		bodySummary: "{\"error\":\"unsupported response shape\"}",
+		content: "raw prompt text",
+		body: "{\"prompt\":\"raw prompt text\"}",
+	});
+
+	assert.deepEqual(sanitized, {
+		contentType: "application/json",
+		bodyExcerpt: "{\"error\":\"Missing required query parameter: api-version\"}",
+		bodySummary: "{\"error\":\"unsupported response shape\"}",
+		content: "[redacted]",
+		body: "[redacted]",
+	});
+});
+
 test("output channel diagnostics writes sanitized details", () => {
 	const lines: string[] = [];
 	const diagnostics = new OutputChannelDiagnostics({
