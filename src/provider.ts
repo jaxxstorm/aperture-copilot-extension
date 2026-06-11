@@ -1,30 +1,65 @@
 import * as vscode from "vscode";
-import { APERTURE_SECRET_KEY, inferApertureApiMode, MODELS_SETTING, SETTINGS_NAMESPACE } from "./aperture";
+import {
+	APERTURE_SECRET_KEY,
+	getEffectiveModelSettings,
+	inferApertureApiMode,
+	LEGACY_APERTURE_SECRET_KEY,
+	LEGACY_MODELS_SETTING,
+	LEGACY_SETTINGS_NAMESPACE,
+	MODELS_SETTING,
+	resolveApertureSecret,
+	SETTINGS_NAMESPACE,
+} from "./aperture";
 import { getApertureRequestHeaders } from "./apertureHeaders";
+import { getApertureApiModeLabel, getApertureEndpoint, getApertureRequestBody } from "./apertureRouting";
+import { ApertureDiagnostics, noopDiagnostics, sanitizeBodyExcerpt, sanitizeError, summarizeUnknown } from "./diagnostics";
+import { getApertureRequestFailureMessage, parseJsonResponseText, parseSseLine } from "./response";
 import { deriveApertureSessionId } from "./session";
-import { ApertureLanguageModelInformation, ChatCompletionChunk, ChatMessage, HFModelItem } from "./types";
+import { ApertureLanguageModelInformation, ChatMessage, HFModelItem } from "./types";
 import { getUserAgent } from "./userAgent";
 
 export class HuggingFaceChatModelProvider implements vscode.LanguageModelChatProvider<
 	ApertureLanguageModelInformation & vscode.LanguageModelChatInformation
 > {
-	public constructor(private readonly context: vscode.ExtensionContext) {}
+	private readonly onDidChangeEmitter = new vscode.EventEmitter<void>();
+	public readonly onDidChangeLanguageModelChatInformation = this.onDidChangeEmitter.event;
+
+	public constructor(
+		private readonly context: vscode.ExtensionContext,
+		private readonly diagnostics: ApertureDiagnostics = noopDiagnostics,
+	) {}
+
+	public notifyModelInformationChanged(): void {
+		this.onDidChangeEmitter.fire();
+	}
+
+	public dispose(): void {
+		this.onDidChangeEmitter.dispose();
+	}
 
 	public provideLanguageModelChatInformation(
 		_options: unknown,
 		_token: vscode.CancellationToken,
 	): vscode.ProviderResult<Array<ApertureLanguageModelInformation & vscode.LanguageModelChatInformation>> {
-		const config = vscode.workspace.getConfiguration(SETTINGS_NAMESPACE);
-		const models = config.get<HFModelItem[]>(MODELS_SETTING, []);
+		const canonicalConfig = vscode.workspace.getConfiguration(SETTINGS_NAMESPACE);
+		const legacyConfig = vscode.workspace.getConfiguration(LEGACY_SETTINGS_NAMESPACE);
+		const { models, source } = getEffectiveModelSettings(
+			canonicalConfig.get<HFModelItem[]>(MODELS_SETTING, []),
+			legacyConfig.get<HFModelItem[]>(LEGACY_MODELS_SETTING, []),
+		);
+		this.diagnostics.log("Providing Aperture model information.", {
+			modelSettingSource: source,
+			count: models.length,
+		});
 
 		return models.map((model) => ({
 			...model,
 			id: model.id,
 			name: model.name,
-			family: model.provider,
+			family: model.model,
 			version: "1.0.0",
-			detail: `${model.provider} (Aperture Copilot)`,
-			tooltip: `${model.provider} (Aperture Copilot)`,
+			detail: `Aperture · ${getApertureApiModeLabel(model.apiMode)}`,
+			tooltip: `Aperture-served model using ${getApertureApiModeLabel(model.apiMode)}`,
 			maxInputTokens: 128000,
 			maxOutputTokens: 8192,
 			capabilities: {
@@ -50,20 +85,51 @@ export class HuggingFaceChatModelProvider implements vscode.LanguageModelChatPro
 			throw new Error(`Model ${model.name} is missing a base URL.`);
 		}
 
-		const apiKey = await this.context.secrets.get(model.apiKeyName ?? APERTURE_SECRET_KEY);
-		const response = await sendApertureRequest(model, messages.map(toChatMessage), apiKey, _options, token);
+		const preferredSecretKey =
+			model.apiKeyName && model.apiKeyName !== LEGACY_APERTURE_SECRET_KEY ? model.apiKeyName : APERTURE_SECRET_KEY;
+		const secret = await resolveApertureSecret(this.context.secrets, preferredSecretKey, LEGACY_APERTURE_SECRET_KEY);
+		this.diagnostics.log("Resolved Aperture request credential.", {
+			modelId: model.id,
+			configId: model.configId,
+			secretSource: secret.source,
+		});
+		const request = await sendApertureRequest(model, messages.map(toChatMessage), secret.value, _options, token, this.diagnostics);
 
-		if (!response.ok) {
-			const body = await response.text();
-			const detail = body ? `\n${body}` : "";
-			throw new Error(`Aperture request failed: ${response.status} ${response.statusText}${detail}`);
+		if (!request.response.ok) {
+			const body = await request.response.text();
+			const bodyExcerpt = sanitizeBodyExcerpt(body);
+			this.diagnostics.log("Aperture request returned an error response.", {
+				modelId: model.id,
+				configId: model.configId,
+				apiMode: request.apiMode,
+				endpointPath: request.endpoint.pathname,
+				status: request.response.status,
+				statusText: request.response.statusText,
+				bodyExcerpt,
+			});
+			throw new Error(getApertureRequestFailureMessage(request.response.status, request.response.statusText, body));
 		}
 
-		if (!response.body) {
-			return;
+		if (!request.response.body) {
+			this.diagnostics.log("Aperture request returned no response body.", {
+				modelId: model.id,
+				configId: model.configId,
+				apiMode: request.apiMode,
+				endpointPath: request.endpoint.pathname,
+			});
+			throw new Error("Aperture request succeeded but returned no response body.");
 		}
 
-		await reportApertureResponse(response, progress);
+		const didReportContent = await reportApertureResponse(request.response, progress, this.diagnostics);
+		if (!didReportContent) {
+			this.diagnostics.log("Aperture request returned no usable response content.", {
+				modelId: model.id,
+				configId: model.configId,
+				apiMode: request.apiMode,
+				endpointPath: request.endpoint.pathname,
+			});
+			throw new Error("Aperture request succeeded but returned no usable response content.");
+		}
 	}
 
 	public async provideTokenCount(
@@ -82,12 +148,62 @@ async function sendApertureRequest(
 	apiKey: string | undefined,
 	options: vscode.ProvideLanguageModelChatResponseOptions,
 	token: vscode.CancellationToken,
-): Promise<Response> {
+	diagnostics: ApertureDiagnostics,
+): Promise<{ response: Response; apiMode: NonNullable<HFModelItem["apiMode"]>; endpoint: URL }> {
 	const apiMode: NonNullable<HFModelItem["apiMode"]> = model.apiMode ?? inferApertureApiMode(model.model) ?? "openai";
-	const endpoint = getApertureEndpoint(model.baseUrl!, model.model, apiMode);
+	const endpoint = new URL(getApertureEndpoint(model.baseUrl!, model.model, apiMode));
 	const body = getApertureRequestBody(model.model, messages, apiMode);
 	const sessionId = deriveApertureSessionId(options);
+	const requestDetails = {
+		modelId: model.id,
+		configId: model.configId,
+		apiMode,
+		endpointPath: endpoint.pathname,
+		hasApiKey: Boolean(apiKey),
+	};
+	diagnostics.log("Sending Aperture request.", requestDetails);
 
+	try {
+		const response = await fetchApertureEndpoint(endpoint, apiKey, apiMode, sessionId, body, token);
+		if (apiMode === "openai" && (await shouldRetryWithOpenAiResponses(response))) {
+			const retryApiMode: NonNullable<HFModelItem["apiMode"]> = "openai-responses";
+			const retryEndpoint = new URL(getApertureEndpoint(model.baseUrl!, model.model, retryApiMode));
+			const retryBody = getApertureRequestBody(model.model, messages, retryApiMode);
+			diagnostics.log("Retrying Aperture request with OpenAI Responses API.", {
+				...requestDetails,
+				apiMode: retryApiMode,
+				endpointPath: retryEndpoint.pathname,
+				previousStatus: response.status,
+				previousStatusText: response.statusText,
+			});
+			return {
+				response: await fetchApertureEndpoint(retryEndpoint, apiKey, retryApiMode, sessionId, retryBody, token),
+				apiMode: retryApiMode,
+				endpoint: retryEndpoint,
+			};
+		}
+
+		return { response, apiMode, endpoint };
+	} catch (error) {
+		diagnostics.log("Aperture request failed before receiving a response.", {
+			modelId: model.id,
+			configId: model.configId,
+			apiMode,
+			endpointPath: endpoint.pathname,
+			error: sanitizeError(error),
+		});
+		throw error;
+	}
+}
+
+async function fetchApertureEndpoint(
+	endpoint: URL,
+	apiKey: string | undefined,
+	apiMode: NonNullable<HFModelItem["apiMode"]>,
+	sessionId: string,
+	body: Record<string, unknown>,
+	token: vscode.CancellationToken,
+): Promise<Response> {
 	return fetch(endpoint, {
 		method: "POST",
 		headers: getApertureRequestHeaders(apiKey, apiMode, getUserAgent(vscode.version), sessionId),
@@ -96,73 +212,52 @@ async function sendApertureRequest(
 	});
 }
 
-function getApertureEndpoint(baseUrl: string, modelId: string, apiMode: NonNullable<HFModelItem["apiMode"]>): string {
-	switch (apiMode) {
-		case "anthropic":
-			return `${baseUrl}/v1/messages`;
-		case "bedrock":
-			return `${baseUrl}/bedrock/model/${encodeURIComponent(modelId)}/invoke`;
-		case "openai":
-		default:
-			return `${baseUrl}/v1/chat/completions`;
+async function shouldRetryWithOpenAiResponses(response: Response): Promise<boolean> {
+	if (response.ok) {
+		return false;
 	}
-}
 
-function getApertureRequestBody(
-	modelId: string,
-	messages: ChatMessage[],
-	apiMode: NonNullable<HFModelItem["apiMode"]>,
-): Record<string, unknown> {
-	switch (apiMode) {
-		case "anthropic":
-			return {
-				model: modelId,
-				max_tokens: 8192,
-				messages: stripSystemMessages(messages),
-				stream: false,
-			};
-		case "bedrock":
-			return {
-				anthropic_version: "bedrock-2023-05-31",
-				max_tokens: 8192,
-				messages: stripSystemMessages(messages),
-			};
-		case "openai":
-		default:
-			return {
-				model: modelId,
-				messages,
-				stream: true,
-			};
-	}
-}
-
-function stripSystemMessages(messages: ChatMessage[]): ChatMessage[] {
-	return messages
-		.filter((message) => message.role !== "system")
-		.map((message) => ({
-			role: message.role === "assistant" ? "assistant" : "user",
-			content: message.content,
-		}));
+	const body = await response.clone().text();
+	return body.includes("v1/responses") && body.includes("v1/chat/completions");
 }
 
 async function reportApertureResponse(
 	response: Response,
 	progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-): Promise<void> {
+	diagnostics: ApertureDiagnostics = noopDiagnostics,
+): Promise<boolean> {
 	const contentType = response.headers.get("content-type") ?? "";
 	if (contentType.includes("text/event-stream")) {
+		let tokenCount = 0;
 		await streamChatResponse(response.body!, (value) => {
+			tokenCount += 1;
 			progress.report(new vscode.LanguageModelTextPart(value));
 		});
-		return;
+		return tokenCount > 0;
 	}
 
-	const body = (await response.json()) as unknown;
+	let body: unknown;
+	try {
+		body = (await response.json()) as unknown;
+	} catch (error) {
+		diagnostics.log("Aperture response JSON parsing failed.", {
+			contentType,
+			error: sanitizeError(error),
+		});
+		return false;
+	}
+
 	const text = parseJsonResponseText(body);
 	if (text) {
 		progress.report(new vscode.LanguageModelTextPart(text));
+		return true;
 	}
+
+	diagnostics.log("Aperture response JSON had no supported text content.", {
+		contentType,
+		bodySummary: summarizeUnknown(body),
+	});
+	return false;
 }
 
 export async function streamChatResponse(
@@ -227,83 +322,6 @@ function messageContentToString(content: readonly unknown[]): string {
 			return "";
 		})
 		.join("");
-}
-
-function parseSseLine(line: string): string | undefined {
-	const trimmed = line.trim();
-	if (!trimmed || !trimmed.startsWith("data:")) {
-		return undefined;
-	}
-
-	const data = trimmed.slice("data:".length).trim();
-	if (!data || data === "[DONE]") {
-		return undefined;
-	}
-
-	const chunk = JSON.parse(data) as ChatCompletionChunk;
-	return (
-		chunk.choices?.[0]?.delta?.content ?? chunk.choices?.[0]?.message?.content ?? parseAnthropicContentDelta(chunk)
-	);
-}
-
-function parseJsonResponseText(body: unknown): string | undefined {
-	if (typeof body !== "object" || body === null) {
-		return undefined;
-	}
-
-	if ("content" in body && Array.isArray(body.content)) {
-		return body.content
-			.map((part) => {
-				if (typeof part === "object" && part !== null && "text" in part && typeof part.text === "string") {
-					return part.text;
-				}
-
-				if (typeof part === "string") {
-					return part;
-				}
-
-				return "";
-			})
-			.join("");
-	}
-
-	if ("output" in body && typeof body.output === "object" && body.output !== null && "message" in body.output) {
-		return parseJsonResponseText(body.output.message);
-	}
-
-	if ("message" in body && typeof body.message === "object") {
-		return parseJsonResponseText(body.message);
-	}
-
-	if ("choices" in body && Array.isArray(body.choices)) {
-		const first = body.choices[0] as unknown;
-		if (typeof first === "object" && first !== null && "message" in first) {
-			return parseJsonResponseText(first.message);
-		}
-	}
-
-	if ("text" in body && typeof body.text === "string") {
-		return body.text;
-	}
-
-	return undefined;
-}
-
-function parseAnthropicContentDelta(chunk: unknown): string | undefined {
-	if (typeof chunk !== "object" || chunk === null) {
-		return undefined;
-	}
-
-	if (!("type" in chunk) || chunk.type !== "content_block_delta" || !("delta" in chunk)) {
-		return undefined;
-	}
-
-	const delta = chunk.delta;
-	if (typeof delta !== "object" || delta === null || !("text" in delta) || typeof delta.text !== "string") {
-		return undefined;
-	}
-
-	return delta.text;
 }
 
 function tokenToSignal(token: vscode.CancellationToken): AbortSignal | undefined {

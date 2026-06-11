@@ -2,9 +2,10 @@
 	"name": "aperture-copilot-extension",
 	"displayName": "Aperture Copilot",
 	"description": "Use Tailscale Aperture-served models in VS Code Chat and Copilot Chat.",
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"publisher": "jaxxstorm",
 	"license": "MIT",
+	"icon": "logo-light.png",
 	"engines": {
 		"vscode": "^1.90.0"
 	},
@@ -14,36 +15,98 @@
 	],
 	"activationEvents": [
 		"onStartupFinished",
-		"onCommand:oaicopilot.configureAperture",
-		"onCommand:oaicopilot.refreshApertureModels"
+		"onLanguageModelChatProvider:aperture-copilot"
 	],
 	"main": "./out/src/extension.js",
 	"enabledApiProposals": [
 		"chatProvider"
 	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/jaxxstorm/aperture-copilot-extension.git"
+	},
 	"contributes": {
 		"commands": [
 			{
-				"command": "oaicopilot.configureAperture",
+				"command": "aperture.configure",
 				"title": "Aperture Copilot: Configure Aperture"
 			},
 			{
-				"command": "oaicopilot.refreshApertureModels",
+				"command": "aperture.refreshModels",
 				"title": "Aperture Copilot: Refresh Aperture Models"
+			},
+			{
+				"command": "aperture.showRegisteredModels",
+				"title": "Aperture Copilot: Show Registered Models"
+			}
+		],
+		"languageModelChatProviders": [
+			{
+				"vendor": "aperture-copilot",
+				"displayName": "Aperture"
 			}
 		],
 		"configuration": {
 			"title": "Aperture Copilot",
 			"properties": {
-				"oaicopilot.aperture.baseUrl": {
+				"aperture.baseUrl": {
 					"type": "string",
 					"default": "",
 					"description": "Base URL for the Tailscale Aperture API, for example http://ai."
 				},
-				"oaicopilot.aperture.providerId": {
+				"aperture.providerId": {
 					"type": "string",
 					"default": "aperture",
 					"description": "Provider identity used for Aperture-discovered model entries."
+				},
+				"aperture.models": {
+					"type": "array",
+					"default": [],
+					"description": "Canonical Aperture model entries used by Aperture Copilot.",
+					"items": {
+						"type": "object",
+						"properties": {
+							"id": {
+								"type": "string",
+								"description": "Unique model entry id."
+							},
+							"name": {
+								"type": "string",
+								"description": "Display name shown in the model picker."
+							},
+							"model": {
+								"type": "string",
+								"description": "Provider model id sent to the upstream API."
+							},
+							"provider": {
+								"type": "string",
+								"description": "Provider identity for this model entry."
+							},
+							"configId": {
+								"type": "string",
+								"description": "Stable configuration identity used for merges."
+							},
+							"baseUrl": {
+								"type": "string",
+								"description": "Base URL used for this model entry."
+							},
+							"apiKeyName": {
+								"type": "string",
+								"description": "SecretStorage key containing the credential for this model entry."
+							},
+							"apiMode": {
+								"type": "string",
+								"enum": [
+									"openai",
+									"openai-responses",
+									"anthropic",
+									"bedrock"
+								],
+								"description": "Aperture API mode used for provider-native request routing."
+							}
+						},
+						"additionalProperties": true
+					}
 				}
 			}
 		}

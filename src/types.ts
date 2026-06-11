@@ -8,7 +8,7 @@ export interface HFModelItem {
 	configId: string;
 	baseUrl?: string;
 	apiKeyName?: string;
-	apiMode?: "openai" | "anthropic" | "bedrock";
+	apiMode?: "openai" | "openai-responses" | "anthropic" | "bedrock";
 }
 
 export interface ApertureLanguageModelInformation extends HFModelItem {
@@ -35,7 +35,7 @@ export interface ApertureModelConfig {
 	id: string;
 	name: string;
 	model: string;
-	apiMode?: "openai" | "anthropic" | "bedrock";
+	apiMode?: "openai" | "openai-responses" | "anthropic" | "bedrock";
 }
 
 export interface ChatMessage {

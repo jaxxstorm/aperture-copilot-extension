@@ -2,16 +2,41 @@
 
 Aperture Copilot is a VS Code extension for using Tailscale Aperture-served models in VS Code Chat and Copilot Chat.
 
-Unlike OpenAI-compatible Copilot extensions that require manually editing VS Code model settings, this extension lets you provide an Aperture base URL, discovers the available models from Aperture, and populates `oaicopilot.models` for you.
+Unlike generic compatible-provider extensions that require manually editing VS Code model settings, this extension lets you provide an Aperture base URL, discovers the available models from Aperture, and populates `aperture.models` for you.
+
+Aperture Copilot is standalone and registers its own Aperture language model provider.
 
 ## Configure Aperture
 
 1. Run **Aperture Copilot: Configure Aperture** from the Command Palette.
 2. Enter the Aperture base URL, for example `http://ai`.
 3. Optionally enter an API key or credential if your Aperture endpoint requires one.
-4. The extension refreshes available models and writes discovered entries to `oaicopilot.models`.
+4. The extension refreshes available models and writes discovered entries to `aperture.models`.
 
 Use **Aperture Copilot: Refresh Aperture Models** whenever Aperture models change.
+
+## Provider-Native Modes
+
+Aperture-served models can use different upstream API modes. The extension keeps one Aperture model picker category, then routes each model according to its configured `apiMode`:
+
+- `openai`: OpenAI-compatible chat completions
+- `openai-responses`: OpenAI Responses API
+- `anthropic`: Anthropic Messages API
+- `bedrock`: AWS Bedrock model invoke
+
+Discovered model metadata is preferred when Aperture provides it. If older discovery responses do not include an API mode, the extension infers one from the model id and still allows manual `apiMode` overrides in `aperture.models`.
+
+## Model Settings Migration
+
+`aperture.models` is the canonical model setting. Builds that used the older compatibility-era model setting continue to work: when `aperture.models` is empty, the extension reads the legacy model list as a fallback and writes refreshed model entries to `aperture.models`.
+
+## Troubleshooting
+
+Open **Output: Aperture Copilot** from the Command Palette to inspect setup, model discovery, settings update, and chat request diagnostics. The log is designed to omit API keys, authorization headers, prompt text, and full request bodies. When filing an issue, include the failing command or model name, the sanitized output-channel entries, whether the model was discovered by Aperture or configured manually, and the API mode shown in diagnostics.
+
+If model refresh fails with a settings error, confirm you are running a build that contributes `aperture.models`. Aperture Copilot owns that setting and should not need another extension to register it.
+
+GitHub Copilot enterprise BYOK is a separate GitHub-managed model surface, not a dependency of Aperture Copilot. GitHub currently documents BYOK as public preview, lists OpenAI-compatible providers as supported, and requires the enterprise **Bring Your Own Language Model Key in VS Code** policy for VS Code use. See GitHub's BYOK documentation for current enterprise requirements: https://docs.github.com/en/copilot/how-tos/administer-copilot/manage-for-enterprise/use-your-own-api-keys
 
 ## Aperture Sessions
 
