@@ -31,7 +31,7 @@ test("uses a stable extension-host fallback session id", () => {
 });
 
 test("adds session headers for all Aperture API modes while preserving existing headers", () => {
-	const apiModes: Array<NonNullable<HFModelItem["apiMode"]>> = ["openai", "anthropic", "bedrock"];
+	const apiModes: Array<NonNullable<HFModelItem["apiMode"]>> = ["openai", "openai-responses", "anthropic", "bedrock"];
 
 	for (const apiMode of apiModes) {
 		const headers = getApertureRequestHeaders("secret", apiMode, "aperture-copilot-extension/test", "session-123") as Record<
@@ -47,7 +47,7 @@ test("adds session headers for all Aperture API modes while preserving existing 
 		assert.equal(headers["Content-Type"], "application/json");
 		assert.equal(headers["User-Agent"], "aperture-copilot-extension/test");
 		assert.equal(headers.Authorization, "Bearer secret");
-		assert.equal(headers.Accept, apiMode === "openai" ? "text/event-stream" : "application/json");
+		assert.equal(headers.Accept, apiMode === "openai" || apiMode === "openai-responses" ? "text/event-stream" : "application/json");
 	}
 });
 

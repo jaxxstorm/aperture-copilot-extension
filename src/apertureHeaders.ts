@@ -9,8 +9,9 @@ export function getApertureRequestHeaders(
 	userAgent: string,
 	sessionId: string,
 ): HeadersInit {
+	const wantsStream = apiMode === "openai" || apiMode === "openai-responses";
 	return {
-		Accept: apiMode === "openai" ? "text/event-stream" : "application/json",
+		Accept: wantsStream ? "text/event-stream" : "application/json",
 		"Content-Type": "application/json",
 		"User-Agent": userAgent,
 		...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
