@@ -152,6 +152,39 @@ The extension SHALL send chat requests for selected Aperture models to the confi
 - **WHEN** Aperture returns a successful response with no usable response content
 - **THEN** the extension reports an explicit empty response failure through VS Code
 
+### Requirement: Chat requests support VS Code tool calls
+The extension SHALL bridge VS Code language model tools to Aperture-served models when the selected model's API mode supports structured tool calls.
+
+#### Scenario: Request includes available tools
+- **WHEN** VS Code sends a chat request with language model tools available
+- **AND** the selected Aperture model uses an API mode with structured tool-call request support
+- **THEN** the extension forwards the tools to Aperture using the provider-native tool definition shape
+
+#### Scenario: Request preserves previous tool calls
+- **WHEN** a follow-up chat request includes a previous assistant tool call
+- **THEN** the extension includes that tool call in the provider-native request message shape instead of flattening it into plain text
+
+#### Scenario: Request preserves tool results
+- **WHEN** a follow-up chat request includes a tool result
+- **THEN** the extension includes that tool result in the provider-native request message shape associated with the original tool call id
+
+#### Scenario: Model requests a tool
+- **WHEN** Aperture returns a structured provider-native tool-call response
+- **THEN** the extension reports a `LanguageModelToolCallPart` with the tool call id, tool name, and parsed input so VS Code can invoke the tool
+
+#### Scenario: Model returns text and tool calls
+- **WHEN** Aperture returns text content and structured tool calls in the same response
+- **THEN** the extension reports text as `LanguageModelTextPart` and tool calls as `LanguageModelToolCallPart` without rendering tool-call payloads as assistant text
+
+#### Scenario: Unsupported tool-call shape
+- **WHEN** Aperture returns a successful response with a tool-call shape the extension cannot parse
+- **THEN** the extension reports an explicit unsupported response failure or sanitized diagnostic instead of claiming the tool was executed
+
+#### Scenario: API mode cannot represent tools
+- **WHEN** VS Code sends a chat request with language model tools available
+- **AND** the selected Aperture model uses an API mode that the extension cannot map to structured tool calls
+- **THEN** the extension does not advertise tool-calling support for that model mode or omits unsupported tools without claiming file-editing capability
+
 ### Requirement: Chat requests preserve Aperture session identity
 The extension SHALL send a stable, opaque session identifier with every Aperture model request so Aperture can group related requests into the same session.
 
@@ -240,6 +273,43 @@ The README SHALL include instructions for running, testing, packaging, publishin
 - **WHEN** setup, model refresh, or chat prompts fail
 - **THEN** the README tells the user where to find the Aperture Copilot output channel and what details are safe to share in an issue
 
+### Requirement: Pull requests run unit tests
+The repository SHALL run the extension unit test suite automatically for pull requests.
+
+#### Scenario: Pull request test workflow runs
+- **WHEN** a pull request targets the repository
+- **THEN** GitHub Actions installs dependencies with a reproducible install command and runs `npm test`
+
+#### Scenario: Pull request workflow uses limited permissions
+- **WHEN** the pull request test workflow runs
+- **THEN** it does not request release-writing permissions
+
+### Requirement: Tags publish VSIX artifacts to GitHub Releases
+The repository SHALL publish a packaged VSIX extension artifact to the GitHub Release associated with a version tag.
+
+#### Scenario: Version tag is pushed
+- **WHEN** a maintainer pushes a version tag matching the release workflow trigger
+- **THEN** GitHub Actions installs dependencies, runs the test suite, builds the VSIX with `npm run build`, and uploads the generated `.vsix` file to the matching GitHub Release
+
+#### Scenario: Release workflow has release permissions
+- **WHEN** the tag release workflow runs
+- **THEN** it requests the minimum GitHub token permission needed to create or update release assets
+
+#### Scenario: Publisher identity is not required for GitHub Release publishing
+- **WHEN** the tag release workflow publishes the VSIX artifact
+- **THEN** it does not require VS Code Marketplace credentials or a Marketplace publisher token
+
+### Requirement: Release automation is documented and verified
+The project SHALL document or test the GitHub Actions release and pull request automation.
+
+#### Scenario: Maintainer reviews release instructions
+- **WHEN** a maintainer reads the repository documentation
+- **THEN** they can identify how to run pull request checks and how to publish a VSIX to a GitHub Release by pushing a version tag
+
+#### Scenario: Workflow files are inspected by tests
+- **WHEN** the unit tests run
+- **THEN** they verify that the pull request workflow runs `npm test` and the tag release workflow builds and uploads a VSIX artifact
+
 ### Requirement: Extension package declares Aperture logo
 The extension SHALL declare a package-compatible Aperture logo image as its VS Code extension icon and include the SVG source logo in the package.
 
@@ -298,3 +368,22 @@ The project SHALL include focused verification for bootstrap behavior, standalon
 #### Scenario: Manifest packaging is tested
 - **WHEN** tests inspect the extension manifest and package ignore rules
 - **THEN** they verify Aperture-named settings, the Aperture chat provider contribution, and packaged logo icon assets are declared
+
+### Requirement: Tool-calling behavior is verified
+The project SHALL include focused verification for VS Code tool-call request conversion, provider-native response parsing, and model capability advertisement.
+
+#### Scenario: Tool definitions are tested
+- **WHEN** tests run with mocked VS Code tool definitions
+- **THEN** they verify supported Aperture API modes receive provider-native tool definition fields
+
+#### Scenario: Tool response parsing is tested
+- **WHEN** tests run with mocked provider-native tool-call responses
+- **THEN** they verify the extension emits `LanguageModelToolCallPart` values with the expected call id, name, and input
+
+#### Scenario: Tool result conversion is tested
+- **WHEN** tests run with prior tool call and tool result message parts
+- **THEN** they verify follow-up Aperture requests preserve those structured parts
+
+#### Scenario: Text fallback is tested
+- **WHEN** tests run with ordinary provider-native text responses
+- **THEN** they verify existing text-only chat behavior remains unchanged

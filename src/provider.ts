@@ -13,9 +13,15 @@ import {
 import { getApertureRequestHeaders } from "./apertureHeaders";
 import { getApertureApiModeLabel, getApertureEndpoint, getApertureRequestBody } from "./apertureRouting";
 import { ApertureDiagnostics, noopDiagnostics, sanitizeBodyExcerpt, sanitizeError, summarizeUnknown } from "./diagnostics";
-import { getApertureRequestFailureMessage, parseJsonResponseText, parseSseLine, SseParseState } from "./response";
+import {
+	getApertureRequestFailureMessage,
+	hasPotentialToolCallShape,
+	parseJsonResponseParts,
+	parseSseLine,
+	SseParseState,
+} from "./response";
 import { deriveApertureSessionId } from "./session";
-import { ApertureLanguageModelInformation, ChatMessage, HFModelItem } from "./types";
+import { ApertureLanguageModelInformation, ChatMessage, ChatMessagePart, ChatTool, HFModelItem, ParsedResponsePart } from "./types";
 import { getUserAgent } from "./userAgent";
 
 export class HuggingFaceChatModelProvider implements vscode.LanguageModelChatProvider<
@@ -63,7 +69,7 @@ export class HuggingFaceChatModelProvider implements vscode.LanguageModelChatPro
 			maxInputTokens: 128000,
 			maxOutputTokens: 8192,
 			capabilities: {
-				toolCalling: true,
+				toolCalling: supportsToolCalling(model.apiMode),
 				imageInput: false,
 			},
 			isUserSelectable: true,
@@ -93,7 +99,14 @@ export class HuggingFaceChatModelProvider implements vscode.LanguageModelChatPro
 			configId: model.configId,
 			secretSource: secret.source,
 		});
-		const request = await sendApertureRequest(model, messages.map(toChatMessage), secret.value, _options, token, this.diagnostics);
+		const request = await sendApertureRequest(
+			model,
+			messages.map(toChatMessage),
+			secret.value,
+			_options,
+			token,
+			this.diagnostics,
+		);
 
 		if (!request.response.ok) {
 			const body = await request.response.text();
@@ -152,7 +165,8 @@ async function sendApertureRequest(
 ): Promise<{ response: Response; apiMode: NonNullable<HFModelItem["apiMode"]>; endpoint: URL }> {
 	const apiMode: NonNullable<HFModelItem["apiMode"]> = model.apiMode ?? inferApertureApiMode(model.model) ?? "openai";
 	const endpoint = new URL(getApertureEndpoint(model.baseUrl!, model.model, apiMode));
-	const body = getApertureRequestBody(model.model, messages, apiMode);
+	const tools = supportsToolCalling(apiMode) ? toChatTools(options.tools ?? []) : [];
+	const body = getApertureRequestBody(model.model, messages, apiMode, tools);
 	const sessionId = deriveApertureSessionId(options);
 	const requestDetails = {
 		modelId: model.id,
@@ -160,6 +174,7 @@ async function sendApertureRequest(
 		apiMode,
 		endpointPath: endpoint.pathname,
 		hasApiKey: Boolean(apiKey),
+		toolCount: tools.length,
 	};
 	diagnostics.log("Sending Aperture request.", requestDetails);
 
@@ -168,7 +183,8 @@ async function sendApertureRequest(
 		if (apiMode === "openai" && (await shouldRetryWithOpenAiResponses(response))) {
 			const retryApiMode: NonNullable<HFModelItem["apiMode"]> = "openai-responses";
 			const retryEndpoint = new URL(getApertureEndpoint(model.baseUrl!, model.model, retryApiMode));
-			const retryBody = getApertureRequestBody(model.model, messages, retryApiMode);
+			const retryTools = supportsToolCalling(retryApiMode) ? tools : [];
+			const retryBody = getApertureRequestBody(model.model, messages, retryApiMode, retryTools);
 			diagnostics.log("Retrying Aperture request with OpenAI Responses API.", {
 				...requestDetails,
 				apiMode: retryApiMode,
@@ -228,12 +244,11 @@ async function reportApertureResponse(
 ): Promise<boolean> {
 	const contentType = response.headers.get("content-type") ?? "";
 	if (contentType.includes("text/event-stream")) {
-		let tokenCount = 0;
-		await streamChatResponse(response.body!, (value) => {
-			tokenCount += 1;
-			progress.report(new vscode.LanguageModelTextPart(value));
+		let partCount = 0;
+		await streamChatResponse(response.body!, (part) => {
+			partCount += reportResponsePart(part, progress);
 		});
-		return tokenCount > 0;
+		return partCount > 0;
 	}
 
 	let body: unknown;
@@ -247,22 +262,27 @@ async function reportApertureResponse(
 		return false;
 	}
 
-	const text = parseJsonResponseText(body);
-	if (text) {
-		progress.report(new vscode.LanguageModelTextPart(text));
+	const parts = parseJsonResponseParts(body);
+	let partCount = 0;
+	for (const part of parts) {
+		partCount += reportResponsePart(part, progress);
+	}
+
+	if (partCount > 0) {
 		return true;
 	}
 
 	diagnostics.log("Aperture response JSON had no supported text content.", {
 		contentType,
 		bodySummary: summarizeUnknown(body),
+		hasPotentialToolCallShape: hasPotentialToolCallShape(body),
 	});
 	return false;
 }
 
 export async function streamChatResponse(
 	body: ReadableStream<Uint8Array>,
-	onToken: (value: string) => void,
+	onPart: (value: ParsedResponsePart) => void,
 ): Promise<void> {
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
@@ -280,9 +300,9 @@ export async function streamChatResponse(
 		buffer = lines.pop() ?? "";
 
 		for (const line of lines) {
-			const token = parseSseLine(line, parseState);
-			if (token) {
-				onToken(token);
+			const parts = parseSseLine(line, parseState);
+			for (const part of parts) {
+				onPart(part);
 			}
 		}
 	}
@@ -292,37 +312,167 @@ export async function streamChatResponse(
 		buffer += tail;
 	}
 
-	const token = parseSseLine(buffer, parseState);
-	if (token) {
-		onToken(token);
+	const parts = parseSseLine(buffer, parseState);
+	for (const part of parts) {
+		onPart(part);
 	}
 }
 
 function toChatMessage(message: vscode.LanguageModelChatRequestMessage): ChatMessage {
 	return {
 		role: message.role === vscode.LanguageModelChatMessageRole.Assistant ? "assistant" : "user",
-		content: messageContentToString(message.content),
+		content: toChatMessageParts(message.content),
 	};
 }
 
 function messageContentToString(content: readonly unknown[]): string {
-	return content
+	return toChatMessageParts(content)
 		.map((part) => {
-			if (part instanceof vscode.LanguageModelTextPart) {
-				return part.value;
+			switch (part.type) {
+				case "text":
+					return part.text;
+				case "tool_call":
+					return `${part.name} ${JSON.stringify(part.input)}`;
+				case "tool_result":
+					return part.content;
 			}
-
-			if (typeof part === "object" && part !== null && "value" in part && typeof part.value === "string") {
-				return part.value;
-			}
-
-			if (typeof part === "object" && part !== null && "text" in part && typeof part.text === "string") {
-				return part.text;
-			}
-
-			return "";
 		})
 		.join("");
+}
+
+function toChatMessageParts(content: readonly unknown[]): ChatMessagePart[] {
+	const parts = content
+		.flatMap((part): ChatMessagePart[] => {
+			const toolCall = toToolCallPart(part);
+			if (toolCall) {
+				return [toolCall];
+			}
+
+			const toolResult = toToolResultPart(part);
+			if (toolResult) {
+				return [toolResult];
+			}
+
+			const text = partToText(part);
+			return text ? [{ type: "text", text }] : [];
+		});
+
+	return parts.length > 0 ? parts : [{ type: "text", text: "" }];
+}
+
+function partToText(part: unknown): string | undefined {
+	if (part instanceof vscode.LanguageModelTextPart) {
+		return part.value;
+	}
+
+	if (typeof part === "object" && part !== null && "value" in part && typeof part.value === "string") {
+		return part.value;
+	}
+
+	if (typeof part === "object" && part !== null && "text" in part && typeof part.text === "string") {
+		return part.text;
+	}
+
+	return undefined;
+}
+
+function toToolCallPart(part: unknown): ChatMessagePart | undefined {
+	if (
+		typeof part !== "object" ||
+		part === null ||
+		!("callId" in part) ||
+		typeof part.callId !== "string" ||
+		!("name" in part) ||
+		typeof part.name !== "string" ||
+		!("input" in part)
+	) {
+		return undefined;
+	}
+
+	return {
+		type: "tool_call",
+		callId: part.callId,
+		name: part.name,
+		input: toRecord(part.input),
+	};
+}
+
+function toToolResultPart(part: unknown): ChatMessagePart | undefined {
+	if (
+		typeof part !== "object" ||
+		part === null ||
+		!("callId" in part) ||
+		typeof part.callId !== "string" ||
+		!("content" in part) ||
+		!Array.isArray(part.content)
+	) {
+		return undefined;
+	}
+
+	return {
+		type: "tool_result",
+		callId: part.callId,
+		content: part.content.map(partToToolResultText).join(""),
+	};
+}
+
+function partToToolResultText(part: unknown): string {
+	const text = partToText(part);
+	if (text !== undefined) {
+		return text;
+	}
+
+	if (typeof part === "object" && part !== null && "data" in part && part.data instanceof Uint8Array) {
+		return `[${"mimeType" in part && typeof part.mimeType === "string" ? part.mimeType : "data"}]`;
+	}
+
+	if (typeof part === "string") {
+		return part;
+	}
+
+	return "";
+}
+
+function toChatTools(tools: readonly vscode.LanguageModelChatTool[]): ChatTool[] {
+	return tools.map((tool) => ({
+		name: tool.name,
+		description: tool.description,
+		inputSchema: tool.inputSchema,
+	}));
+}
+
+function reportResponsePart(
+	part: ParsedResponsePart,
+	progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+): number {
+	if (part.type === "text") {
+		if (!part.text) {
+			return 0;
+		}
+
+		progress.report(new vscode.LanguageModelTextPart(part.text));
+		return 1;
+	}
+
+	progress.report(new vscode.LanguageModelToolCallPart(part.callId, part.name, part.input));
+	return 1;
+}
+
+function supportsToolCalling(apiMode: HFModelItem["apiMode"]): boolean {
+	switch (apiMode) {
+		case "openai":
+		case "openai-responses":
+		case "anthropic":
+		case "bedrock":
+		case undefined:
+			return true;
+		default:
+			return false;
+	}
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function tokenToSignal(token: vscode.CancellationToken): AbortSignal | undefined {

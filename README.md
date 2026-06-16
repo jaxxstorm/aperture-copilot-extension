@@ -42,6 +42,12 @@ GitHub Copilot enterprise BYOK is a separate GitHub-managed model surface, not a
 
 Every chat request includes an opaque session header so Aperture can group related VS Code Chat and Copilot Chat requests into one conversation in the Aperture dashboard. When VS Code exposes stable chat metadata, the extension derives the session from that metadata; otherwise it uses an extension-host fallback id without including prompt text or secrets.
 
+## Tool Calls and File Editing
+
+Aperture Copilot forwards VS Code-provided language model tools to supported Aperture API modes and relays structured model tool-call responses back to VS Code. File edits, reads, and other tool actions are still executed by VS Code's normal tool invocation flow; Aperture Copilot does not edit files directly.
+
+If a model prints tool-like XML or JSON as assistant text instead of returning a structured provider-native tool call, VS Code will display that text and no tool will run. Check **Output: Aperture Copilot** for sanitized response-shape diagnostics when a model appears to claim an edit but the workspace is unchanged.
+
 ## Run Locally
 
 ```bash
@@ -74,5 +80,11 @@ Create a VSIX package:
 ```bash
 npm run build
 ```
+
+Pull requests run the unit test suite in GitHub Actions using `npm ci` and `npm test`.
+
+To publish an installable VSIX through GitHub Releases, push a version tag such as `v0.0.3`. The release workflow runs `npm ci`, `npm test`, and `npm run build`, then creates or updates the matching GitHub Release and uploads the generated `*.vsix` artifact. Repository Actions settings must allow the workflow token to write release contents.
+
+GitHub Release publication does not require VS Code Marketplace credentials, a Marketplace publisher token, or a final Marketplace publisher identity.
 
 Publishing to the VS Code Marketplace requires a publisher account, a personal access token, and marketplace approval for any proposed API usage declared by the extension.
