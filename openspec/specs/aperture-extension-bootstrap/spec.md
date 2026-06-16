@@ -186,15 +186,19 @@ The extension SHALL bridge VS Code language model tools to Aperture-served model
 - **THEN** the extension does not advertise tool-calling support for that model mode or omits unsupported tools without claiming file-editing capability
 
 ### Requirement: Chat requests preserve Aperture session identity
-The extension SHALL send a stable, opaque session identifier with every Aperture model request so Aperture can group related requests into the same session.
+The extension SHALL send a stable, opaque session identifier with every Aperture model request so Aperture can group related requests into the same session through header-based client identification without adding provider-invalid request body fields.
 
 #### Scenario: Request metadata has session id
 - **WHEN** VS Code request or option metadata contains a stable chat session, conversation, thread, or request parent identifier
-- **THEN** the extension sends an Aperture session header derived from that identifier
+- **THEN** the extension sends an Aperture session identifier derived from that identifier
 
 #### Scenario: Request metadata lacks session id
 - **WHEN** VS Code request or option metadata does not expose a stable chat session identifier
 - **THEN** the extension sends a generated opaque fallback session id
+
+#### Scenario: Request-scoped metadata is ignored
+- **WHEN** VS Code request or option metadata contains request-scoped identifiers such as `requestId` or `parentRequestId`
+- **THEN** the extension does not derive a new session id from those request-scoped identifiers
 
 #### Scenario: Related requests reuse session id
 - **WHEN** multiple model requests belong to the same observed VS Code chat context
@@ -207,6 +211,10 @@ The extension SHALL send a stable, opaque session identifier with every Aperture
 #### Scenario: Session header is sent for all API modes
 - **WHEN** a request is sent through OpenAI-compatible chat, OpenAI Responses, Anthropic Messages, or Bedrock Aperture routing
 - **THEN** the extension includes the session id header with the request
+
+#### Scenario: Provider-native request bodies remain valid
+- **WHEN** a request is sent through OpenAI-compatible chat, OpenAI Responses, Anthropic Messages, or Bedrock Aperture routing
+- **THEN** the extension does not add session fields that are invalid for the provider-native request schema
 
 ### Requirement: Diagnostics are logged safely
 The extension SHALL write detailed diagnostics for setup, model discovery, settings updates, chat requests, and response parsing to an Aperture Copilot output channel without exposing secret material or prompt content.

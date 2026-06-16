@@ -78,6 +78,10 @@ test("discovers models with fallback endpoints and authorization", async () => {
 			});
 		}
 
+		if (String(url).endsWith("/v1/models")) {
+			return Response.json({ data: [] });
+		}
+
 		return Response.json({
 			data: [{ id: "aperture-code", name: "Aperture Code" }],
 		});
@@ -89,14 +93,46 @@ test("discovers models with fallback endpoints and authorization", async () => {
 		},
 	});
 
-	assert.equal(calls.length, 2);
+	assert.equal(calls.length, 3);
 	assert.equal(calls[0].url, "http://ai/ui/api/model/config");
 	assert.equal(calls[1].url, "http://ai/ui/api/models");
+	assert.equal(calls[2].url, "http://ai/v1/models");
 	assert.equal(calls[1].authorization, "Bearer secret");
 	assert.equal(calls[1].userAgent, "aperture-copilot-extension/test");
 	assert.deepEqual(models, [{ id: "aperture-code", name: "Aperture Code", model: "aperture-code", apiMode: "openai" }]);
 	assert.ok(logs.some((entry) => entry.message === "Aperture model discovery endpoint failed."));
 	assert.ok(logs.some((entry) => entry.message === "Aperture model discovery endpoint returned models."));
+});
+
+test("merges discovered models across Aperture endpoints", async () => {
+	const fetchImpl: typeof fetch = async (url) => {
+		if (String(url).endsWith("/ui/api/model/config")) {
+			return Response.json({
+				models: [{ id: "claude-sonnet-4-6", name: "Sonnet 4.6" }],
+			});
+		}
+
+		if (String(url).endsWith("/ui/api/models")) {
+			return Response.json({
+				models: [
+					{ id: "claude-sonnet-4-6", name: "Sonnet 4.6 Duplicate" },
+					{ id: "claude-3-5-haiku-latest", name: "Haiku 3.5" },
+				],
+			});
+		}
+
+		return Response.json({
+			data: [{ id: "claude-3-haiku-20240307", name: "Haiku 3" }],
+		});
+	};
+
+	const models = await discoverApertureModels("http://ai", undefined, fetchImpl, "aperture-copilot-extension/test");
+
+	assert.deepEqual(models, [
+		{ id: "claude-sonnet-4-6", name: "Sonnet 4.6 Duplicate", model: "claude-sonnet-4-6", apiMode: "anthropic" },
+		{ id: "claude-3-5-haiku-latest", name: "Haiku 3.5", model: "claude-3-5-haiku-latest", apiMode: "anthropic" },
+		{ id: "claude-3-haiku-20240307", name: "Haiku 3", model: "claude-3-haiku-20240307", apiMode: "anthropic" },
+	]);
 });
 
 test("discovery diagnostics summarize no-model responses without secrets", async () => {

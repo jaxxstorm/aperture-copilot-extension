@@ -206,6 +206,17 @@ test("preserves structured tool calls and results in request bodies", () => {
 	]);
 });
 
+test("does not inject session ids into strict provider-native request bodies", () => {
+	const apiModes: Array<NonNullable<HFModelItem["apiMode"]>> = ["openai", "openai-responses", "anthropic", "bedrock"];
+
+	for (const apiMode of apiModes) {
+		const body = getApertureRequestBody("model-id", messages, apiMode);
+
+		assert.equal(body.session_id, undefined);
+		assert.equal(body.sessionId, undefined);
+	}
+});
+
 test("labels API modes without calling every upstream OpenAI", () => {
 	assert.equal(getApertureApiModeLabel("openai"), "OpenAI-compatible chat");
 	assert.equal(getApertureApiModeLabel("openai-responses"), "OpenAI Responses");

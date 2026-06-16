@@ -123,6 +123,7 @@ export async function discoverApertureModels(
 ): Promise<ApertureModelConfig[]> {
 	const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
 	const paths = ["/ui/api/model/config", "/ui/api/models", "/v1/models"];
+	const discoveredById = new Map<string, ApertureModelConfig>();
 
 	let lastError: Error | undefined;
 	for (const path of paths) {
@@ -150,7 +151,10 @@ export async function discoverApertureModels(
 					path,
 					count: models.length,
 				});
-				return models;
+				for (const model of models) {
+					discoveredById.set(model.id, model);
+				}
+				continue;
 			}
 			diagnostics.log("Aperture model discovery endpoint returned no models.", {
 				path,
@@ -164,6 +168,10 @@ export async function discoverApertureModels(
 			});
 			lastError = error instanceof Error ? error : new Error(String(error));
 		}
+	}
+
+	if (discoveredById.size > 0) {
+		return [...discoveredById.values()];
 	}
 
 	throw lastError ?? new Error("Aperture model discovery failed.");

@@ -23,6 +23,7 @@ import {
 import { deriveApertureSessionId } from "./session";
 import { ApertureLanguageModelInformation, ChatMessage, ChatMessagePart, ChatTool, HFModelItem, ParsedResponsePart } from "./types";
 import { getUserAgent } from "./userAgent";
+import { getLanguageModelChatId } from "./languageModelIdentity";
 
 export class HuggingFaceChatModelProvider implements vscode.LanguageModelChatProvider<
 	ApertureLanguageModelInformation & vscode.LanguageModelChatInformation
@@ -60,7 +61,7 @@ export class HuggingFaceChatModelProvider implements vscode.LanguageModelChatPro
 
 		return models.map((model) => ({
 			...model,
-			id: model.id,
+			id: getLanguageModelChatId(model),
 			name: model.name,
 			family: model.model,
 			version: "1.0.0",
@@ -166,8 +167,8 @@ async function sendApertureRequest(
 	const apiMode: NonNullable<HFModelItem["apiMode"]> = model.apiMode ?? inferApertureApiMode(model.model) ?? "openai";
 	const endpoint = new URL(getApertureEndpoint(model.baseUrl!, model.model, apiMode));
 	const tools = supportsToolCalling(apiMode) ? toChatTools(options.tools ?? []) : [];
-	const body = getApertureRequestBody(model.model, messages, apiMode, tools);
 	const sessionId = deriveApertureSessionId(options);
+	const body = getApertureRequestBody(model.model, messages, apiMode, tools);
 	const requestDetails = {
 		modelId: model.id,
 		configId: model.configId,

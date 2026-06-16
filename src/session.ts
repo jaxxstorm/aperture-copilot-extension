@@ -11,10 +11,6 @@ const STABLE_SESSION_KEYS = [
 	"conversation_id",
 	"threadid",
 	"thread_id",
-	"parentrequestid",
-	"parent_request_id",
-	"requestid",
-	"request_id",
 	"chatid",
 	"chat_id",
 ];
@@ -76,6 +72,9 @@ function findSessionValue(source: unknown, seen = new WeakSet<object>()): string
 
 	for (const [key, value] of Object.entries(source)) {
 		if (shouldSkipKey(key)) {
+			continue;
+		}
+		if (!isRecord(value)) {
 			continue;
 		}
 

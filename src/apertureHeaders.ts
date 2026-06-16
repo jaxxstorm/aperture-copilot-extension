@@ -1,7 +1,13 @@
 import { HFModelItem } from "./types";
 
 export const APERTURE_SESSION_HEADER = "x-aperture-session-id";
-export const APERTURE_SESSION_HEADER_ALIASES = ["x-codex-window-id", "x-client-request-id"];
+export const APERTURE_SESSION_HEADER_ALIASES = [
+	"x-codex-session-id",
+	"x-openai-session-id",
+	"x-session-id",
+	"x-codex-window-id",
+	"x-client-request-id",
+];
 
 export function getApertureRequestHeaders(
 	apiKey: string | undefined,
